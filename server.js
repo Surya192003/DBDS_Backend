@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const connection = require('./config/db');
-
+const groupRoutes = require('./routes/groups');
 dotenv.config();
 
 const app = express();
@@ -78,6 +78,7 @@ app.use('/api/classes', classRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/groups', groupRoutes);
 // Source - https://stackoverflow.com/a
 // Posted by Donggi Kim, modified by community. See post 'Timeline' for change history
 // Retrieved 2026-01-25, License - CC BY-SA 4.0
