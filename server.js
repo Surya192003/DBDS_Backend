@@ -3,6 +3,8 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const connection = require('./config/db');
 const groupRoutes = require('./routes/groups');
+const uploadRoutes = require('./routes/upload');
+const path = require('path');
 dotenv.config();
 
 const app = express();
@@ -71,6 +73,7 @@ const attendanceRoutes = require('./routes/attendance');
 const paymentRoutes = require('./routes/payments');
 const reportRoutes = require('./routes/reports');
 
+
 // ✅ Use routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -79,6 +82,9 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/groups', groupRoutes);
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/upload', uploadRoutes);
+
 // Source - https://stackoverflow.com/a
 // Posted by Donggi Kim, modified by community. See post 'Timeline' for change history
 // Retrieved 2026-01-25, License - CC BY-SA 4.0
