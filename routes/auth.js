@@ -13,95 +13,147 @@ router.options('/{*any}', (req, res) => {
 });
 
 // ✅ LOGIN - Simple working version
+// router.post('/login', async (req, res) => {
+//   try {
+//     console.log('📥 Login request body:', req.body);
+    
+//     const { email, password } = req.body;
+    
+//     // Basic validation
+//     if (!email || !password) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Email and password are required'
+//       });
+//     }
+    
+//     // Find user
+//     connection.query(
+//       'SELECT * FROM users WHERE email = ?',
+//       [email],
+//       async (err, results) => {
+//         if (err) {
+//           console.error('❌ Database error:', err);
+//           return res.status(500).json({
+//             success: false,
+//             message: 'Database error'
+//           });
+//         }
+        
+//         if (results.length === 0) {
+//           return res.status(401).json({
+//             success: false,
+//             message: 'Invalid email or password'
+//           });
+//         }
+        
+//         const user = results[0];
+        
+//         // Check if active
+//         if (!user.is_active) {
+//           return res.status(403).json({
+//             success: false,
+//             message: 'Account is pending admin approval'
+//           });
+//         }
+        
+//         // Check password
+//         const validPassword = await bcrypt.compare(password, user.password);
+//         if (!validPassword) {
+//           return res.status(401).json({
+//             success: false,
+//             message: 'Invalid email or password'
+//           });
+//         }
+        
+//         // Create token
+//         const token = jwt.sign(
+//           {
+//             id: user.id,
+//             email: user.email,
+//             role: user.role,
+//             name: user.name
+//           },
+//           process.env.JWT_SECRET || 'dev-secret-key',
+//           { expiresIn: '24h' }
+//         );
+        
+//         // Send response
+//         res.json({
+//           success: true,
+//           message: 'Login successful',
+//           token: token,
+//           user: {
+//             id: user.id,
+//             name: user.name,
+//             email: user.email,
+//             role: user.role,
+//             is_active: user.is_active
+//           }
+//         });
+        
+//         console.log('✅ Login successful for:', email);
+//       }
+//     );
+    
+//   } catch (error) {
+//     console.error('❌ Login error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Server error during login'
+//     });
+//   }
 router.post('/login', async (req, res) => {
   try {
     console.log('📥 Login request body:', req.body);
-    
     const { email, password } = req.body;
-    
-    // Basic validation
+
     if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email and password are required'
-      });
+      return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
-    
-    // Find user
-    connection.query(
-      'SELECT * FROM users WHERE email = ?',
-      [email],
-      async (err, results) => {
-        if (err) {
-          console.error('❌ Database error:', err);
-          return res.status(500).json({
-            success: false,
-            message: 'Database error'
-          });
-        }
-        
-        if (results.length === 0) {
-          return res.status(401).json({
-            success: false,
-            message: 'Invalid email or password'
-          });
-        }
-        
-        const user = results[0];
-        
-        // Check if active
-        if (!user.is_active) {
-          return res.status(403).json({
-            success: false,
-            message: 'Account is pending admin approval'
-          });
-        }
-        
-        // Check password
-        const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) {
-          return res.status(401).json({
-            success: false,
-            message: 'Invalid email or password'
-          });
-        }
-        
-        // Create token
-        const token = jwt.sign(
-          {
-            id: user.id,
-            email: user.email,
-            role: user.role,
-            name: user.name
-          },
-          process.env.JWT_SECRET || 'dev-secret-key',
-          { expiresIn: '24h' }
-        );
-        
-        // Send response
-        res.json({
-          success: true,
-          message: 'Login successful',
-          token: token,
-          user: {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-            is_active: user.is_active
-          }
-        });
-        
-        console.log('✅ Login successful for:', email);
-      }
+
+    // Query using pool
+    const [results] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+
+    if (results.length === 0) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    const user = results[0];
+
+    if (!user.is_active) {
+      return res.status(403).json({ success: false, message: 'Account is pending admin approval' });
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role, name: user.name },
+      process.env.JWT_SECRET || 'dev-secret-key',
+      { expiresIn: '24h' }
     );
-    
-  } catch (error) {
-    console.error('❌ Login error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error during login'
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        is_active: user.is_active
+      }
     });
+
+    console.log('✅ Login successful for:', email);
+
+  } catch (err) {
+    console.error('❌ Login error:', err);
+    res.status(500).json({ success: false, message: 'Server error during login', error: err.message });
   }
 });
 
