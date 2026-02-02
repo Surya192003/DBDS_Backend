@@ -36,7 +36,7 @@ app.use(cors({
 // ✅ Handle preflight OPTIONS requests for ALL routes
 // app.options('/{*any}', cors());
 
-app.options('*', cors());
+app.options(/.*/, cors());
 
 
 // ✅ Middleware
@@ -114,13 +114,14 @@ app.use('/api/upload', uploadRoutes);
 // app.all('/{*any}', (req, res, next) => {})
 
 // ✅ Catch-all 404 handler
-app.all('/{*any}', (req, res) => { 
+app.all(/.*/, (req, res) => {
   res.status(404).json({
     success: false,
     message: `Route ${req.originalUrl} not found`,
     method: req.method
   });
 });
+
 
 // ✅ Global error handler
 app.use((err, req, res, next) => {
