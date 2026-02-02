@@ -1,14 +1,19 @@
 const mysql = require('mysql2');
 
 const connection = mysql.createConnection({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '12345678',
-  database: process.env.DB_NAME || 'dance_management',
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
   port: process.env.DB_PORT || 3306,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+});
+
+connection.on('connect', () => {
+  console.log('✅ MySQL connected successfully');
+});
+
+connection.on('error', (err) => {
+  console.error('❌ MySQL error:', err.message);
 });
 
 module.exports = connection;
