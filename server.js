@@ -18,14 +18,26 @@ const app = express();
 //   preflightContinue: false,
 //   optionsSuccessStatus: 204
 // }));
+
+
+// app.use(cors({
+//   origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:4200', '*'],
+//   credentials: true,
+//   optionsSuccessStatus: 200
+// }));
+
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:4200', '*'],
+  origin: true, // reflect request origin
   credentials: true,
   optionsSuccessStatus: 200
 }));
 
+
 // ✅ Handle preflight OPTIONS requests for ALL routes
-app.options('/{*any}', cors());
+// app.options('/{*any}', cors());
+
+app.options('*', cors());
+
 
 // ✅ Middleware
 app.use(express.json());
@@ -47,14 +59,7 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'Server is healthy',
-    timestamp: new Date().toISOString(),
-    cors: 'Enabled for all origins'
-  });
-});
+
 
 // ✅ Database connection
 connection.connect((err) => {
@@ -63,6 +68,23 @@ connection.connect((err) => {
     return;
   }
   console.log('✅ Connected to MySQL database');
+});
+
+app.get('/api/db-health', (req, res) => {
+  connection.ping(err => {
+    if (err) {
+      return res.status(500).json({
+        status: 'DOWN',
+        message: 'Database not connected',
+        error: err.message
+      });
+    }
+
+    res.json({
+      status: 'UP',
+      message: 'Database connected successfully'
+    });
+  });
 });
 
 // ✅ Import routes
