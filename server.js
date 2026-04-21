@@ -25,6 +25,7 @@ const corsOptions = {
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
+      'https://frontend-go1a.onrender.com',
       'http://localhost:5173',
       'http://localhost:5174',
       'http://localhost:4200',
