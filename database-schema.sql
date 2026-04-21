@@ -96,8 +96,6 @@ CREATE TABLE IF NOT EXISTS attendance (
     notes TEXT,
     marked_by INTEGER REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Ensure one attendance record per student per class
     UNIQUE(class_id, student_id)
 );
 
@@ -344,3 +342,5 @@ COMMENT ON TABLE settings IS 'System configuration settings';
 -- GRANT CONNECT ON DATABASE dance_management TO report_user;
 -- GRANT USAGE ON SCHEMA public TO report_user;
 -- GRANT SELECT ON ALL TABLES IN SCHEMA public TO report_user;
+
+ALTER TABLE users ADD COLUMN photo_url VARCHAR(500);

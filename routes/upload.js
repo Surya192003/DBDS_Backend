@@ -2,39 +2,36 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const { authMiddleware } = require('../middleware/auth');
-const connection = require('../config/db');
+const db = require('../config/db');   // your PostgreSQL connection pool
 
-// Configure multer for file upload
+// Configure multer (same as before)
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/profile-photos/');
+  destination: (req, file, cb) => {
+    const dir = 'uploads/profile-photos/';
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
   },
-  filename: function (req, file, cb) {
+  filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'user-' + req.user.id + '-' + uniqueSuffix + path.extname(file.originalname));
+    cb(null, `user-${req.user.id}-${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
 
 const fileFilter = (req, file, cb) => {
-  // Accept images only
-  if (file.mimetype.startsWith('image/')) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only image files are allowed!'), false);
-  }
+  if (file.mimetype.startsWith('image/')) cb(null, true);
+  else cb(new Error('Only image files allowed'), false);
 };
 
 const upload = multer({
-  storage: storage,
-  fileFilter: fileFilter,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  }
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
 });
 
-// Upload profile photo
-router.post('/profile-photo', authMiddleware, upload.single('photo'), (req, res) => {
+// Upload profile photo – PostgreSQL version
+router.post('/profile-photo', authMiddleware, upload.single('photo'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: 'No file uploaded' });
   }
@@ -42,80 +39,56 @@ router.post('/profile-photo', authMiddleware, upload.single('photo'), (req, res)
   const photoUrl = `/uploads/profile-photos/${req.file.filename}`;
   const userId = req.user.id;
 
-  connection.query(
-    'UPDATE users SET photo_url = ? WHERE id = ?',
-    [photoUrl, userId],
-    (err, result) => {
-      if (err) {
-        console.error('Database error:', err);
-        return res.status(500).json({ message: 'Database error' });
-      }
+  try {
+    // Update user's photo_url (PostgreSQL uses $1, $2)
+    await db.query(
+      'UPDATE users SET photo_url = $1 WHERE id = $2',
+      [photoUrl, userId]
+    );
 
-      // Get updated user info
-      connection.query(
-        'SELECT * FROM users WHERE id = ?',
-        [userId],
-        (err, userResults) => {
-          if (err) {
-            console.error('Database error:', err);
-            return res.status(500).json({ message: 'Database error' });
-          }
+    // Fetch updated user
+    const result = await db.query(
+      'SELECT id, name, email, role, photo_url, is_active FROM users WHERE id = $1',
+      [userId]
+    );
 
-          res.json({
-            message: 'Profile photo uploaded successfully',
-            photoUrl: photoUrl,
-            user: userResults[0]
-          });
-        }
-      );
-    }
-  );
+    res.json({
+      message: 'Profile photo uploaded successfully',
+      photoUrl,
+      user: result.rows[0]
+    });
+  } catch (err) {
+    console.error('Upload DB error:', err);
+    res.status(500).json({ message: 'Database error' });
+  }
 });
 
-// Delete profile photo
-router.delete('/profile-photo', authMiddleware, (req, res) => {
+// Delete profile photo (PostgreSQL)
+router.delete('/profile-photo', authMiddleware, async (req, res) => {
   const userId = req.user.id;
-  const fs = require('fs');
-  const path = require('path');
 
-  // Get current photo URL
-  connection.query(
-    'SELECT photo_url FROM users WHERE id = ?',
-    [userId],
-    (err, results) => {
-      if (err) {
-        console.error('Database error:', err);
-        return res.status(500).json({ message: 'Database error' });
-      }
+  try {
+    // Get current photo URL
+    const result = await db.query(
+      'SELECT photo_url FROM users WHERE id = $1',
+      [userId]
+    );
+    const currentPhotoUrl = result.rows[0]?.photo_url;
 
-      const currentPhotoUrl = results[0]?.photo_url;
-
-      // Delete photo file if exists
-      if (currentPhotoUrl) {
-        const filePath = path.join(__dirname, '..', currentPhotoUrl);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      }
-
-      // Update database
-      connection.query(
-        'UPDATE users SET photo_url = NULL WHERE id = ?',
-        [userId],
-        (err, result) => {
-          if (err) {
-            console.error('Database error:', err);
-            return res.status(500).json({ message: 'Database error' });
-          }
-
-          res.json({ message: 'Profile photo removed successfully' });
-        }
-      );
+    // Delete file if exists
+    if (currentPhotoUrl) {
+      const filePath = path.join(__dirname, '..', currentPhotoUrl);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
-  );
-});
 
-// Serve uploaded files statically
-router.use('/profile-photos', express.static(path.join(__dirname, '../uploads/profile-photos')));
+    // Remove from DB
+    await db.query('UPDATE users SET photo_url = NULL WHERE id = $1', [userId]);
+
+    res.json({ message: 'Profile photo removed successfully' });
+  } catch (err) {
+    console.error('Delete error:', err);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
 
 module.exports = router;
