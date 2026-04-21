@@ -16,9 +16,7 @@ const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
-
 const app = express();
-
 // ========== CORS Configuration ==========
 // Detailed CORS setup with logging
 const corsOptions = {
@@ -238,10 +236,8 @@ app.use('/api/upload', uploadRoutes);
 // ========== Static File Serving ==========
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
-// ========== Error Handling Middleware ==========
-// 404 Handler
-app.use((req, res, next) => {
-  console.log(`❌ 404: Route not found: ${req.method} ${req.originalUrl}`);
+// ✅ Catch-all 404 handler
+app.all(/.*/, (req, res) => {
   res.status(404).json({
     success: false,
     message: `Route ${req.originalUrl} not found`,
@@ -257,7 +253,8 @@ app.use((req, res, next) => {
   });
 });
 
-// Global Error Handler
+
+// ✅ Global error handler
 app.use((err, req, res, next) => {
   console.error('❌ ========== UNHANDLED ERROR ==========');
   console.error('Error Timestamp:', new Date().toISOString());
@@ -331,88 +328,12 @@ app.use((err, req, res, next) => {
 // ========== Server Startup ==========
 const PORT = process.env.PORT || 5010;
 
-const server = app.listen(PORT, '0.0.0.0', async () => {
-  console.log('\n' + '='.repeat(70));
-  console.log(`🚀 Dance Management API Server`);
-  console.log('='.repeat(70));
-  console.log(`📡 Server URL: http://localhost:${PORT}`);
-  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📊 Database: PostgreSQL (Render.com)`);
-  console.log(`📁 Uploads: ${uploadsDir}`);
-  console.log(`⏰ Started: ${new Date().toISOString()}`);
-  console.log('='.repeat(70));
-  console.log('\n📋 Available Endpoints:');
-  console.log(`   👤 Auth:     http://localhost:${PORT}/api/auth`);
-  console.log(`   👥 Users:    http://localhost:${PORT}/api/users`);
-  console.log(`   🏫 Classes:  http://localhost:${PORT}/api/classes`);
-  console.log(`   📝 Attendance: http://localhost:${PORT}/api/attendance`);
-  console.log(`   💰 Payments: http://localhost:${PORT}/api/payments`);
-  console.log(`   📈 Reports:  http://localhost:${PORT}/api/reports`);
-  console.log(`   👥 Groups:   http://localhost:${PORT}/api/groups`);
-  console.log(`   📤 Upload:   http://localhost:${PORT}/api/upload`);
-  console.log(`   🩺 Health:   http://localhost:${PORT}/api/health`);
-  console.log(`   🗄️  DB Health: http://localhost:${PORT}/api/db-health`);
-  console.log('\n🔧 Debug Information:');
-  console.log(`   PID: ${process.pid}`);
-  console.log(`   Node: ${process.version}`);
-  console.log(`   Platform: ${process.platform}/${process.arch}`);
-  console.log('='.repeat(70) + '\n');
-  
-  // Perform initial database health check
-  try {
-    const dbHealth = await db.ping();
-    if (dbHealth) {
-      console.log('✅ Database connection verified');
-    } else {
-      console.log('⚠️  Database connection issue detected');
-    }
-  } catch (error) {
-    console.error('❌ Initial database check failed:', error.message);
-  }
+app.listen(PORT, () => {
+  console.log('\n' + '='.repeat(50));
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🌐 CORS enabled for ALL origins (*)`);
+  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🔗 API Root: http://localhost:${PORT}/`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log('='.repeat(50) + '\n');
 });
-
-// ========== Graceful Shutdown ==========
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
-
-function gracefulShutdown(signal) {
-  console.log(`\n${signal} received, starting graceful shutdown...`);
-  
-  server.close(async () => {
-    console.log('🔒 HTTP server closed');
-    
-    try {
-      await db.close();
-      console.log('🔌 Database connections closed');
-    } catch (error) {
-      console.error('❌ Error closing database connections:', error);
-    }
-    
-    console.log('👋 Graceful shutdown complete');
-    process.exit(0);
-  });
-  
-  // Force shutdown after 10 seconds
-  setTimeout(() => {
-    console.error('❌ Could not close connections in time, forcefully shutting down');
-    process.exit(1);
-  }, 10000);
-}
-
-// Handle unhandled rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  // Don't exit the process, just log
-});
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
-  // Don't exit immediately, let the error handler deal with it
-});
-
-const bcrypt = require('bcryptjs');
-
-bcrypt.hash('12345678', 10).then(console.log);
-
-module.exports = app; // For testing purposes
