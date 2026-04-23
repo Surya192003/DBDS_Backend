@@ -3,7 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const db = require('./config/db');
 const groupRoutes = require('./routes/groups');
-
+const instructorRoutes = require('./routes/instructor');
 const uploadRoutes = require('./routes/upload');
 const path = require('path');
 const fs = require('fs');
@@ -233,6 +233,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/upload', uploadRoutes);
+app.use('/api/instructor', instructorRoutes);
 
 // ========== Static File Serving ==========
 app.use('/public', express.static(path.join(__dirname, 'public')));

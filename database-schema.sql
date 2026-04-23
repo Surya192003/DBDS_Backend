@@ -344,3 +344,133 @@ COMMENT ON TABLE settings IS 'System configuration settings';
 -- GRANT SELECT ON ALL TABLES IN SCHEMA public TO report_user;
 
 ALTER TABLE users ADD COLUMN photo_url VARCHAR(500);
+
+CREATE TABLE IF NOT EXISTS class_enrollments (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    enrolled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'dropped', 'completed')),
+    UNIQUE(class_id, student_id)
+);
+
+CREATE INDEX idx_class_enrollments_class_id ON class_enrollments(class_id);
+CREATE INDEX idx_class_enrollments_student_id ON class_enrollments(student_id);
+
+
+
+
+CREATE OR REPLACE FUNCTION update_class_current_students()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE classes SET current_students = current_students + 1
+        WHERE id = NEW.class_id;
+    ELSIF TG_OP = 'DELETE' AND OLD.status = 'active' THEN
+        UPDATE classes SET current_students = current_students - 1
+        WHERE id = OLD.class_id;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_update_class_student_count
+AFTER INSERT OR DELETE ON class_enrollments
+FOR EACH ROW EXECUTE FUNCTION update_class_current_students();
+
+ALTER TABLE classes ADD COLUMN group_id INTEGER REFERENCES groups(id) ON DELETE SET NULL;
+CREATE INDEX idx_classes_group_id ON classes(group_id);
+
+
+CREATE OR REPLACE FUNCTION enroll_group_members_on_class_group()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT' AND NEW.group_id IS NOT NULL) OR
+       (TG_OP = 'UPDATE' AND OLD.group_id IS DISTINCT FROM NEW.group_id AND NEW.group_id IS NOT NULL) THEN
+        
+        INSERT INTO class_enrollments (class_id, student_id, status, enrolled_at)
+        SELECT NEW.id, gm.student_id, 'active', CURRENT_TIMESTAMP
+        FROM group_members gm
+        WHERE gm.group_id = NEW.group_id
+          AND gm.status = 'active'
+          AND NOT EXISTS (
+              SELECT 1 FROM class_enrollments ce
+              WHERE ce.class_id = NEW.id AND ce.student_id = gm.student_id
+          );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_enroll_group_members
+AFTER INSERT OR UPDATE OF group_id ON classes
+FOR EACH ROW
+EXECUTE FUNCTION enroll_group_members_on_class_group();
+
+CREATE OR REPLACE VIEW student_attendance_stats AS
+SELECT 
+  s.id AS student_id,
+  COUNT(DISTINCT ce.class_id) AS total_classes,
+  COUNT(DISTINCT CASE WHEN a.is_present THEN a.class_id END) AS attended_classes
+FROM students s
+LEFT JOIN class_enrollments ce ON s.id = ce.student_id AND ce.status = 'active'
+LEFT JOIN attendance a ON s.id = a.student_id AND a.is_present = TRUE
+GROUP BY s.id;
+
+
+CREATE OR REPLACE FUNCTION update_student_total_classes()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.status = 'active' THEN
+    UPDATE students SET total_classes = total_classes + 1 WHERE id = NEW.student_id;
+  ELSIF TG_OP = 'UPDATE' AND OLD.status = 'active' AND NEW.status != 'active' THEN
+    UPDATE students SET total_classes = total_classes - 1 WHERE id = NEW.student_id;
+  ELSIF TG_OP = 'DELETE' AND OLD.status = 'active' THEN
+    UPDATE students SET total_classes = total_classes - 1 WHERE id = OLD.student_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_student_total_classes
+AFTER INSERT OR UPDATE OR DELETE ON class_enrollments
+FOR EACH ROW EXECUTE FUNCTION update_student_total_classes();
+
+
+CREATE TABLE IF NOT EXISTS instructor_class_attendance (
+  id SERIAL PRIMARY KEY,
+  instructor_id INTEGER NOT NULL REFERENCES instructors(id) ON DELETE CASCADE,
+  class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  tag_in_time TIMESTAMP NOT NULL,
+  tag_out_time TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(class_id, instructor_id)
+);
+
+CREATE OR REPLACE FUNCTION decrement_student_total_classes()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.status = 'active' THEN
+    UPDATE students SET total_classes = total_classes - 1 WHERE id = OLD.student_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_decrement_student_total_classes
+AFTER DELETE ON class_enrollments
+FOR EACH ROW EXECUTE FUNCTION decrement_student_total_classes();
+
+CREATE OR REPLACE FUNCTION decrement_student_attended_classes()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.is_present = TRUE THEN
+    UPDATE students SET attended_classes = attended_classes - 1 WHERE id = OLD.student_id;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_decrement_student_attended_classes
+AFTER DELETE ON attendance
+FOR EACH ROW EXECUTE FUNCTION decrement_student_attended_classes();
