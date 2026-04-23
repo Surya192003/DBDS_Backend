@@ -8,6 +8,7 @@ const uploadRoutes = require('./routes/upload');
 const path = require('path');
 const fs = require('fs');
 
+
 // Load environment variables
 dotenv.config();
 
@@ -71,6 +72,7 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.static(path.join(__dirname, 'dist/DBDS_Frontend')));
 // Request logging middleware with enhanced details
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
@@ -107,7 +109,9 @@ app.use((req, res, next) => {
   
   next();
 });
-
+app.get('', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist/your-app-name', 'index.html'));
+});
 // ========== Health Check Endpoints ==========
 app.get('/', (req, res) => {
   res.json({ 

@@ -9,7 +9,6 @@ router.post('/tag-in', authMiddleware, authorizeRoles('INSTRUCTOR'), async (req,
   const userId = req.user.id;
 
   try {
-    // Get instructor_id from user_id
     const instructorRes = await db.query(
       'SELECT id FROM instructors WHERE user_id = $1',
       [userId]
@@ -19,42 +18,48 @@ router.post('/tag-in', authMiddleware, authorizeRoles('INSTRUCTOR'), async (req,
     }
     const instructor_id = instructorRes.rows[0].id;
 
-    // Get class details
+    // Query: return class start as timestamptz in Europe/Dublin, and current time
     const classRes = await db.query(
-      'SELECT class_date, class_time FROM classes WHERE id = $1 AND instructor_id = $2',
+      `SELECT 
+         (class_date + class_time) AT TIME ZONE 'Europe/Dublin' AS class_start_tz,
+         NOW() AS now_tz
+       FROM classes 
+       WHERE id = $1 AND instructor_id = $2`,
       [class_id, instructor_id]
     );
+
     if (classRes.rows.length === 0) {
       return res.status(404).json({ message: 'Class not found or not assigned to you' });
     }
 
-    const classStart = new Date(classRes.rows[0].class_date);
-    const [hours, minutes] = classRes.rows[0].class_time.split(':');
-    classStart.setHours(parseInt(hours), parseInt(minutes), 0, 0);
-    const now = new Date();
-
-    // Allow tag-in within 15 minutes before start and 15 minutes after start
+    const classStart = new Date(classRes.rows[0].class_start_tz);
+    const now = new Date(classRes.rows[0].now_tz);
     const diffMinutes = (now - classStart) / (1000 * 60);
+
     if (diffMinutes < -15 || diffMinutes > 15) {
-      return res.status(400).json({ message: 'You can only tag in 15 minutes before or after class start time' });
+      return res.status(400).json({
+        message: `You can only tag in 15 minutes before or after class start time. Current diff: ${Math.round(diffMinutes)} minutes.`
+      });
     }
 
-    // Check if already tagged in
+    // Already tagged in check
     const existing = await db.query(
-      'SELECT * FROM instructor_class_attendance WHERE class_id = $1 AND instructor_id = $2 AND tag_out_time IS NULL',
+      `SELECT * FROM instructor_class_attendance 
+       WHERE class_id = $1 AND instructor_id = $2 AND tag_out_time IS NULL`,
       [class_id, instructor_id]
     );
     if (existing.rows.length > 0) {
       return res.status(400).json({ message: 'Already tagged in for this class' });
     }
 
+    // Insert using NOW() – PostgreSQL uses its own timezone (which we can set to UTC or keep as server default)
     await db.query(
       `INSERT INTO instructor_class_attendance (instructor_id, class_id, tag_in_time)
-       VALUES ($1, $2, $3)`,
-      [instructor_id, class_id, now]
+       VALUES ($1, $2, NOW())`,
+      [instructor_id, class_id]
     );
 
-    res.json({ message: 'Tagged in successfully', tag_in_time: now });
+    res.json({ message: 'Tagged in successfully' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
