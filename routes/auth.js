@@ -39,30 +39,6 @@ function validateRegistration(data) {
   return errors;
 }
 
-// // ========== OPTIONS Handler ==========
-// router.options('*', (req, res) => {
-//   res.header('Access-Control-Allow-Origin', '*');
-//   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-//   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-//   res.header('Access-Control-Allow-Credentials', 'true');
-//   res.sendStatus(200);
-// });
-
-// router.options('/login', (req, res) => {
-//   res.header('Access-Control-Allow-Origin', '*');
-//   res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-//   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-//   res.header('Access-Control-Allow-Credentials', 'true');
-//   res.sendStatus(200);
-// });
-
-// router.options('/register', (req, res) => {
-//   res.header('Access-Control-Allow-Origin', '*');
-//   res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-//   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
-//   res.header('Access-Control-Allow-Credentials', 'true');
-//   res.sendStatus(200);
-// });
 
 // ========== LOGIN ==========
 router.post('/login', async (req, res) => {

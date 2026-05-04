@@ -474,3 +474,72 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_decrement_student_attended_classes
 AFTER DELETE ON attendance
 FOR EACH ROW EXECUTE FUNCTION decrement_student_attended_classes();
+
+
+-- ENUM types for announcements
+CREATE TYPE announcement_category AS ENUM ('EVENTS', 'WORKSHOPS', 'PERFORMANCES');
+CREATE TYPE media_type AS ENUM ('IMAGE', 'VIDEO');
+CREATE TYPE registration_type AS ENUM ('FREE', 'PAID');
+
+-- Announcements table
+CREATE TABLE announcements (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(200) NOT NULL,
+    description TEXT NOT NULL,
+    category announcement_category NOT NULL,
+    media_type media_type NOT NULL,
+    media_url TEXT NOT NULL,                 -- YouTube embed URL or image URL
+    image_storage TEXT,                      -- local file path if uploaded
+    registration_enabled BOOLEAN DEFAULT FALSE,
+    registration_type registration_type,
+    price DECIMAL(10,2) CHECK (price >= 0),
+    created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Registration for announcements (events/workshops)
+CREATE TABLE announcement_registrations (
+    id SERIAL PRIMARY KEY,
+    announcement_id INTEGER NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('STUDENT', 'INSTRUCTOR')),
+    payment_status VARCHAR(20) DEFAULT 'PENDING' CHECK (payment_status IN ('PENDING', 'COMPLETED')),
+    amount_paid DECIMAL(10,2) DEFAULT 0,
+    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(announcement_id, user_id)
+);
+
+-- Posts (social feed)
+CREATE TABLE posts (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(200),                      -- optional
+    description TEXT,
+    video_url TEXT NOT NULL,                 -- YouTube embed URL
+    thumbnail_url TEXT,
+    created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Triggers for updated_at (same as existing)
+CREATE TRIGGER update_announcements_updated_at
+    BEFORE UPDATE ON announcements
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_posts_updated_at
+    BEFORE UPDATE ON posts
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Indexes for performance
+CREATE INDEX idx_announcements_category ON announcements(category);
+CREATE INDEX idx_announcements_registration_enabled ON announcements(registration_enabled);
+CREATE INDEX idx_announcements_created_at ON announcements(created_at);
+CREATE INDEX idx_announcement_registrations_announcement ON announcement_registrations(announcement_id);
+CREATE INDEX idx_announcement_registrations_user ON announcement_registrations(user_id);
+CREATE INDEX idx_posts_created_at ON posts(created_at DESC);
+
+SELECT a.*, COUNT(ar.id) as registrations_count
+FROM announcements a
+LEFT JOIN announcement_registrations ar ON a.id = ar.announcement_id
+GROUP BY a.id

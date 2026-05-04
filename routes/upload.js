@@ -30,6 +30,8 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB
 });
 
+
+
 // Upload profile photo – PostgreSQL version
 router.post('/profile-photo', authMiddleware, upload.single('photo'), async (req, res) => {
   if (!req.file) {

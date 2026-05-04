@@ -121,75 +121,65 @@ router.delete('/:id', authMiddleware, authorizeRoles('ADMIN'), async (req, res) 
   }
 });
 
-// Get user profile with photo
-router.get('/profile', authMiddleware, async (req, res) => {
-  const userId = req.user.id;
-  
-  try {
-    const query = `
-      SELECT u.*, 
-             i.id as instructor_id, 
-             i.pay_per_class,
-             s.id as student_id
-      FROM users u
-      LEFT JOIN instructors i ON u.id = i.user_id
-      LEFT JOIN students s ON u.id = s.user_id
-      WHERE u.id = $1
-    `;
-    
-    const result = await db.query(query, [userId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-    
-    const user = result.rows[0];
-    
-    // Convert photo_url to full URL if exists
-    if (user.photo_url) {
-      user.photo_url = `http://localhost:${process.env.PORT || 5000}${user.photo_url}`;
-    }
-    
-    res.json(user);
-    
-  } catch (error) {
-    console.error('Database error:', error);
-    res.status(500).json({ message: 'Database error' });
-  }
-});
-
-// Update user profile (name, email)
+// Update user profile (single, correct version)
 router.put('/profile', authMiddleware, async (req, res) => {
   const userId = req.user.id;
-  const { name, email } = req.body;
+  const { name, email, phone, address } = req.body;
   
   if (!name || !email) {
     return res.status(400).json({ message: 'Name and email are required' });
   }
   
   try {
-    // Check if email is already taken by another user
+    // Check email uniqueness excluding current user
     const emailCheck = await db.query(
       'SELECT id FROM users WHERE email = $1 AND id != $2',
       [email, userId]
     );
-    
     if (emailCheck.rows.length > 0) {
       return res.status(400).json({ message: 'Email already in use' });
     }
     
     // Update user
     await db.query(
-      'UPDATE users SET name = $1, email = $2 WHERE id = $3',
-      [name, email, userId]
+      `UPDATE users 
+       SET name = $1, email = $2, phone = $3, address = $4 
+       WHERE id = $5`,
+      [name, email, phone || null, address || null, userId]
     );
     
-    res.json({ message: 'Profile updated successfully' });
+    // Fetch updated user (including role, photo_url, etc.)
+    const result = await db.query(
+      `SELECT id, name, email, role, phone, address, photo_url, is_active 
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+    const updatedUser = result.rows[0];
+    
+    // Also fetch student_id or instructor_id if needed (for frontend consistency)
+    let studentId = null, instructorId = null;
+    if (updatedUser.role === 'STUDENT') {
+      const s = await db.query('SELECT id FROM students WHERE user_id = $1', [userId]);
+      if (s.rows.length) studentId = s.rows[0].id;
+    } else if (updatedUser.role === 'INSTRUCTOR') {
+      const i = await db.query('SELECT id FROM instructors WHERE user_id = $1', [userId]);
+      if (i.rows.length) instructorId = i.rows[0].id;
+    }
+    
+    res.json({ 
+      message: 'Profile updated successfully',
+      user: {
+        ...updatedUser,
+        student_id: studentId,
+        instructor_id: instructorId
+      }
+    });
     
   } catch (error) {
-    console.error('Database error:', error);
+    console.error('Profile update error:', error);
     res.status(500).json({ message: 'Database error' });
   }
 });
+
 
 module.exports = router;

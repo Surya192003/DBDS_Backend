@@ -6,6 +6,8 @@ const groupRoutes = require('./routes/groups');
 const instructorRoutes = require('./routes/instructor');
 const uploadRoutes = require('./routes/upload');
 const path = require('path');
+const registartion = require('./routes/announcement');
+const posts = require('./routes/post');
 const fs = require('fs');
 
 
@@ -27,10 +29,7 @@ const corsOptions = {
     
     const allowedOrigins = [
       'https://frontend-go1a.onrender.com',
-      'http://localhost:5173',
-      'http://localhost:5174',
       'http://localhost:4200',
-      'http://localhost:3000',
       'http://localhost:5010'
     ];
     
@@ -237,6 +236,8 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/upload', uploadRoutes);
+app.use('/api/announcements',registartion );
+app.use('/api/posts', posts);
 app.use('/api/instructor', instructorRoutes);
 
 // ========== Static File Serving ==========
