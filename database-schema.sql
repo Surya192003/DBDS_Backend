@@ -543,3 +543,7 @@ SELECT a.*, COUNT(ar.id) as registrations_count
 FROM announcements a
 LEFT JOIN announcement_registrations ar ON a.id = ar.announcement_id
 GROUP BY a.id
+
+ALTER TABLE announcements
+ADD COLUMN event_date DATE,
+ADD COLUMN event_start_time TIME;

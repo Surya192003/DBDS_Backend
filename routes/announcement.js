@@ -26,8 +26,8 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5M
 // ------------------------------
 
 router.get('/admin', authMiddleware, authorizeRoles('ADMIN'), async (req, res) => {
-  try {
-    const query = `
+    try {
+        const query = `
       SELECT a.*, u.name as creator_name,
         COUNT(ar.id) as registrations_count
       FROM announcements a
@@ -36,12 +36,12 @@ router.get('/admin', authMiddleware, authorizeRoles('ADMIN'), async (req, res) =
       GROUP BY a.id, u.name
       ORDER BY a.created_at DESC
     `;
-    const result = await db.query(query);
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
+        const result = await db.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Create announcement (with optional image upload)
@@ -49,7 +49,8 @@ router.post('/', authMiddleware, authorizeRoles('ADMIN'), upload.single('image')
     try {
         const {
             title, description, category, media_type, media_url,
-            registration_enabled, registration_type, price
+            registration_enabled, registration_type, price,
+            event_date, event_start_time          // ← add
         } = req.body;
 
         let imageStorage = null;
@@ -58,12 +59,13 @@ router.post('/', authMiddleware, authorizeRoles('ADMIN'), upload.single('image')
         }
 
         const query = `
-            INSERT INTO announcements 
-            (title, description, category, media_type, media_url, image_storage,
-             registration_enabled, registration_type, price, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            RETURNING id
-        `;
+    INSERT INTO announcements 
+    (title, description, category, media_type, media_url, image_storage,
+     registration_enabled, registration_type, price, created_by,
+     event_date, event_start_time)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    RETURNING id
+`;
         const values = [
             title, description, category, media_type,
             media_url || (imageStorage ? imageStorage : null),
@@ -71,7 +73,9 @@ router.post('/', authMiddleware, authorizeRoles('ADMIN'), upload.single('image')
             registration_enabled === 'true' || registration_enabled === true,
             registration_type || null,
             price || null,
-            req.user.id   // user_id from token
+            req.user.id,
+            event_date || null,              // ← add
+            event_start_time || null         // ← add
         ];
         const result = await db.query(query, values);
         res.status(201).json({ id: result.rows[0].id, message: 'Announcement created' });
@@ -105,25 +109,30 @@ router.put('/:id', authMiddleware, authorizeRoles('ADMIN'), upload.single('image
         } = req.body;
 
         const query = `
-            UPDATE announcements SET
-                title = COALESCE($1, title),
-                description = COALESCE($2, description),
-                category = COALESCE($3, category),
-                media_type = COALESCE($4, media_type),
-                media_url = COALESCE($5, media_url),
-                image_storage = COALESCE($6, image_storage),
-                registration_enabled = COALESCE($7, registration_enabled),
-                registration_type = COALESCE($8, registration_type),
-                price = COALESCE($9, price),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = $10
-            RETURNING id
-        `;
+    UPDATE announcements SET
+        title = COALESCE($1, title),
+        description = COALESCE($2, description),
+        category = COALESCE($3, category),
+        media_type = COALESCE($4, media_type),
+        media_url = COALESCE($5, media_url),
+        image_storage = COALESCE($6, image_storage),
+        registration_enabled = COALESCE($7, registration_enabled),
+        registration_type = COALESCE($8, registration_type),
+        price = COALESCE($9, price),
+        event_date = COALESCE($10, event_date),         -- new
+        event_start_time = COALESCE($11, event_start_time), -- new
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = $12
+    RETURNING id
+`;
         const values = [
             title, description, category, media_type, media_url,
             imageStorage,
             registration_enabled === 'true' || registration_enabled === true,
-            registration_type, price, id
+            registration_type, price,
+            event_date,             // add
+            event_start_time,       // add
+            id
         ];
         await db.query(query, values);
         res.json({ message: 'Updated' });
@@ -158,61 +167,61 @@ router.delete('/:id', authMiddleware, authorizeRoles('ADMIN'), async (req, res) 
 // Get all announcements (filter by category)
 // Public read (no auth required)
 router.get('/', async (req, res) => {
-  try {
-    let userId = null;
-    let isAdmin = false;
-    let isAuthenticated = false;
+    try {
+        let userId = null;
+        let isAdmin = false;
+        let isAuthenticated = false;
 
-    // Optional authentication – check token if present
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        userId = decoded.id;
-        isAuthenticated = true;
-        if (decoded.role === 'ADMIN') isAdmin = true;
-      } catch (e) { /* ignore invalid token */ }
-    }
+        // Optional authentication – check token if present
+        const token = req.headers.authorization?.split(' ')[1];
+        if (token) {
+            try {
+                const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                userId = decoded.id;
+                isAuthenticated = true;
+                if (decoded.role === 'ADMIN') isAdmin = true;
+            } catch (e) { /* ignore invalid token */ }
+        }
 
-    // Build the SELECT clause
-    let selectFields = `
+        // Build the SELECT clause
+        let selectFields = `
       a.*, u.name as creator_name,
-      ${isAuthenticated 
-        ? 'EXISTS (SELECT 1 FROM announcement_registrations ar WHERE ar.announcement_id = a.id AND ar.user_id = $1) as user_registered' 
-        : 'FALSE as user_registered'}
+      ${isAuthenticated
+                ? 'EXISTS (SELECT 1 FROM announcement_registrations ar WHERE ar.announcement_id = a.id AND ar.user_id = $1) as user_registered'
+                : 'FALSE as user_registered'}
     `;
-    
-    // Admin gets registrations count
-    if (isAdmin) {
-      selectFields += `,
-        (SELECT COUNT(*) FROM announcement_registrations ar WHERE ar.announcement_id = a.id) as registrations_count`;
-    }
 
-    let query = `
+        // Admin gets registrations count
+        if (isAdmin) {
+            selectFields += `,
+        (SELECT COUNT(*) FROM announcement_registrations ar WHERE ar.announcement_id = a.id) as registrations_count`;
+        }
+
+        let query = `
       SELECT ${selectFields}
       FROM announcements a
       LEFT JOIN users u ON a.created_by = u.id
     `;
-    
-    const params = [];
-    if (req.query.category) {
-      query += ` WHERE a.category = $${params.length + (isAuthenticated ? 2 : 1)}`;
-      params.push(req.query.category);
-    }
-    
-    query += ` ORDER BY a.created_at DESC`;
 
-    // Prepare parameters: first param is userId if authenticated, then category
-    let allParams = [];
-    if (isAuthenticated) allParams.push(userId);
-    allParams.push(...params);
-    
-    const result = await db.query(query, allParams);
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
+        const params = [];
+        if (req.query.category) {
+            query += ` WHERE a.category = $${params.length + (isAuthenticated ? 2 : 1)}`;
+            params.push(req.query.category);
+        }
+
+        query += ` ORDER BY a.created_at DESC`;
+
+        // Prepare parameters: first param is userId if authenticated, then category
+        let allParams = [];
+        if (isAuthenticated) allParams.push(userId);
+        allParams.push(...params);
+
+        const result = await db.query(query, allParams);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 
@@ -278,9 +287,9 @@ router.get('/:id/registrations', authMiddleware, authorizeRoles('ADMIN'), async 
 // GET /api/announcements/my-registrations – announcements the logged-in user registered for
 // Keep only this block for /my-registrations
 router.get('/my-registrations', authMiddleware, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const query = `
+    try {
+        const userId = req.user.id;
+        const query = `
       SELECT a.*, u.name as creator_name,
         ar.payment_status, ar.amount_paid,
         TRUE as user_registered
@@ -290,12 +299,12 @@ router.get('/my-registrations', authMiddleware, async (req, res) => {
       WHERE ar.user_id = $1
       ORDER BY a.created_at DESC
     `;
-    const result = await db.query(query, [userId]);
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
+        const result = await db.query(query, [userId]);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 
