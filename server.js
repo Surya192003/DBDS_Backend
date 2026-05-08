@@ -8,6 +8,7 @@ const uploadRoutes = require('./routes/upload');
 const path = require('path');
 const registartion = require('./routes/announcement');
 const posts = require('./routes/post');
+const settings = require('./routes/settings');
 const fs = require('fs');
 
 
@@ -239,6 +240,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/announcements',registartion );
 app.use('/api/posts', posts);
 app.use('/api/instructor', instructorRoutes);
+app.use('/api/settings', settings);
 
 // ========== Static File Serving ==========
 app.use('/public', express.static(path.join(__dirname, 'public')));

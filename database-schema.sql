@@ -553,3 +553,15 @@ ADD COLUMN transaction_id VARCHAR(100),
 ADD COLUMN payment_date DATE,
 ADD COLUMN payment_time TIME,
 ADD COLUMN payment_type VARCHAR(50);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT
+);
+
+-- Insert default values (optional)
+INSERT INTO app_settings (key, value)
+VALUES 
+  ('academic_year_start', '2025-09-01'),
+  ('academic_year_end', '2026-08-31')
+ON CONFLICT (key) DO NOTHING;
