@@ -234,32 +234,45 @@ router.post('/:id/register', authMiddleware, authorizeRoles('STUDENT', 'INSTRUCT
     try {
         const announcementId = req.params.id;
         const userId = req.user.id;
-        const role = req.user.role; // 'STUDENT' or 'INSTRUCTOR'
+        const role = req.user.role;
+        const { transaction_id, payment_date, payment_time, payment_type } = req.body;
 
-        // Check announcement exists and registration is enabled
-        const ann = await db.query('SELECT registration_enabled, registration_type, price FROM announcements WHERE id = $1', [announcementId]);
+        const ann = await db.query('SELECT * FROM announcements WHERE id = $1', [announcementId]);
         if (ann.rows.length === 0) return res.status(404).json({ error: 'Announcement not found' });
         if (!ann.rows[0].registration_enabled) {
             return res.status(400).json({ error: 'Registration not enabled for this announcement' });
         }
 
-        // Check if already registered
         const existing = await db.query('SELECT id FROM announcement_registrations WHERE announcement_id = $1 AND user_id = $2', [announcementId, userId]);
         if (existing.rows.length) {
             return res.status(400).json({ error: 'Already registered' });
         }
 
-        const amountPaid = ann.rows[0].registration_type === 'PAID' ? ann.rows[0].price : 0;
-        // For now, if PAID, we set payment_status = 'PENDING' (future integration)
-        const paymentStatus = (ann.rows[0].registration_type === 'PAID' && amountPaid > 0) ? 'PENDING' : 'COMPLETED';
+        const isPaid = ann.rows[0].registration_type === 'PAID';
+        const amountPaid = isPaid ? ann.rows[0].price : 0;
+
+        // For paid events, payment details must be provided
+        if (isPaid && (!transaction_id || !payment_date || !payment_time || !payment_type)) {
+            return res.status(400).json({ error: 'Payment details required for paid events' });
+        }
+
+        const paymentStatus = isPaid ? 'PENDING' : 'COMPLETED';
 
         const insert = await db.query(`
-            INSERT INTO announcement_registrations (announcement_id, user_id, role, payment_status, amount_paid)
-            VALUES ($1, $2, $3, $4, $5) RETURNING id
-        `, [announcementId, userId, role, paymentStatus, amountPaid]);
+            INSERT INTO announcement_registrations 
+            (announcement_id, user_id, role, payment_status, amount_paid,
+             transaction_id, payment_date, payment_time, payment_type)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id
+        `, [announcementId, userId, role, paymentStatus, amountPaid,
+            transaction_id || null, payment_date || null,
+            payment_time || null, payment_type || null]);
 
-        // TODO: If PAID, trigger payment flow (future)
-        res.status(201).json({ message: 'Registered successfully', registrationId: insert.rows[0].id, paymentRequired: paymentStatus === 'PENDING' });
+        res.status(201).json({
+            message: 'Registered successfully',
+            registrationId: insert.rows[0].id,
+            paymentRequired: isPaid
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message });
@@ -277,7 +290,7 @@ router.get('/:id/registrations', authMiddleware, authorizeRoles('ADMIN'), async 
             WHERE ar.announcement_id = $1
             ORDER BY ar.registered_at DESC
         `, [id]);
-        res.json(result.rows);
+        res.json(result.rows);   // now includes transaction_id, payment_date, etc.
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message });
@@ -301,6 +314,37 @@ router.get('/my-registrations', authMiddleware, async (req, res) => {
     `;
         const result = await db.query(query, [userId]);
         res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.put('/registrations/:registrationId/complete', authMiddleware, authorizeRoles('ADMIN'), async (req, res) => {
+    try {
+        const regId = req.params.registrationId;
+        const reg = await db.query(`
+            SELECT ar.*, a.title as event_title, u.phone, u.name as user_name
+            FROM announcement_registrations ar
+            JOIN announcements a ON ar.announcement_id = a.id
+            JOIN users u ON ar.user_id = u.id
+            WHERE ar.id = $1
+        `, [regId]);
+
+        if (reg.rows.length === 0) return res.status(404).json({ error: 'Registration not found' });
+        if (reg.rows[0].payment_status === 'COMPLETED') {
+            return res.status(400).json({ error: 'Already completed' });
+        }
+
+        await db.query('UPDATE announcement_registrations SET payment_status = $1 WHERE id = $2', ['COMPLETED', regId]);
+
+        // Send WhatsApp confirmation (optional – see section 6)
+        const { phone, user_name, event_title, amount_paid } = reg.rows[0];
+        if (phone) {
+            // sendPaymentConfirmation(phone, user_name, event_title, amount_paid);   // uncomment when Twilio is ready
+        }
+
+        res.json({ message: 'Payment marked as completed' });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: err.message });

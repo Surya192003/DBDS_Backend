@@ -547,3 +547,9 @@ GROUP BY a.id
 ALTER TABLE announcements
 ADD COLUMN event_date DATE,
 ADD COLUMN event_start_time TIME;
+
+ALTER TABLE announcement_registrations
+ADD COLUMN transaction_id VARCHAR(100),
+ADD COLUMN payment_date DATE,
+ADD COLUMN payment_time TIME,
+ADD COLUMN payment_type VARCHAR(50);
