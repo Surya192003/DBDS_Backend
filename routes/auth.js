@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
+const { sendPasswordResetEmail } = require('../utils/mailer');
 
 // ========== Helper Functions ==========
 const validateEmail = (email) => {
@@ -623,69 +624,53 @@ router.post('/refresh', async (req, res) => {
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
-    
-    if (!email || !validateEmail(email)) {
+    if (!email) {
       return res.status(400).json({
         success: false,
-        message: 'Valid email is required'
+        message: 'Email is required'
       });
     }
-    
-    // Check if user exists
+
+    // Check if user exists and is active
     const userResult = await db.query(
       'SELECT id, name, email FROM users WHERE email = $1 AND is_active = true',
       [email]
     );
-    
+
     if (userResult.rows.length === 0) {
-      // For security, don't reveal if email exists or not
-      console.log(`Password reset requested for non-existent/inactive email: ${email}`);
+      // For security, respond with same message
       return res.json({
         success: true,
         message: 'If your email is registered, you will receive a password reset link'
       });
     }
-    
+
     const user = userResult.rows[0];
-    
+
     // Generate reset token (expires in 1 hour)
     const resetToken = jwt.sign(
       { id: user.id, email: user.email, type: 'password_reset' },
       process.env.JWT_SECRET || 'dev-secret-key',
       { expiresIn: '1h' }
     );
-    
-    // In production, you would:
-    // 1. Save reset token to database with expiration
-    // 2. Send email with reset link
-    // 3. Log the reset request
-    
-    console.log(`🔐 Password reset token generated for: ${email}`);
-    console.log(`Reset token: ${resetToken.substring(0, 20)}...`);
-    
-    // For development, return the token
-    if (process.env.NODE_ENV === 'development') {
-      return res.json({
-        success: true,
-        message: 'Password reset link would be sent via email in production',
-        development: {
-          reset_token: resetToken,
-          reset_link: `http://localhost:5173/reset-password?token=${resetToken}`
-        },
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email
-        }
-      });
+
+    // Build reset link (frontend URL + token)
+    const resetLink = `${process.env.FRONTEND_URL || 'http://localhost:4200'}/#/reset-password?token=${resetToken}`;
+
+    // Send email
+    try {
+      await sendPasswordResetEmail(user.email, user.name, resetLink);
+    } catch (emailErr) {
+      console.error('Failed to send reset email:', emailErr);
+      // Still respond with the neutral message – do not reveal email failure details
     }
-    
-    // In production, just acknowledge the request
+
+    // Always return the same neutral success message
     res.json({
       success: true,
       message: 'If your email is registered, you will receive a password reset link shortly'
     });
-    
+
   } catch (error) {
     console.error('❌ Forgot password error:', error);
     res.status(500).json({
@@ -788,7 +773,7 @@ router.post('/reset-password', async (req, res) => {
 // ========== CHANGE PASSWORD (Authenticated) ==========
 router.post('/change-password', async (req, res) => {
   try {
-    const { current_password, new_password, confirm_password } = req.body;
+    const { currentPassword, newPassword, confirmPassword } = req.body;
     const authHeader = req.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
