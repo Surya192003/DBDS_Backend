@@ -31,7 +31,8 @@ const corsOptions = {
     const allowedOrigins = [
       'https://frontend-go1a.onrender.com',
       'http://localhost:4200',
-      'http://localhost:5010'
+      'http://localhost:5010',
+      'https://www.dbdsdanceacadamy.run.place'
     ];
     
     // Allow all origins in development
