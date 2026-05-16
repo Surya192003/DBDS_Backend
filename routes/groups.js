@@ -3,14 +3,37 @@ const router = express.Router();
 const { authMiddleware, authorizeRoles } = require('../middleware/auth');
 const db = require('../config/db');
 
-// Get all groups
+// ---------- Helper functions (avoid repetition) ----------
+
+// Simple check existence
+async function groupExists(client, groupId) {
+  const res = await client.query('SELECT id, max_students, current_students FROM groups WHERE id = $1', [groupId]);
+  return res.rows[0]; // undefined if not found
+}
+
+async function studentExists(client, studentId) {
+  const res = await client.query('SELECT id FROM students WHERE id = $1', [studentId]);
+  return res.rows.length > 0;
+}
+
+async function isMember(client, groupId, studentId, status = 'active') {
+  const res = await client.query(
+    'SELECT id FROM group_members WHERE group_id = $1 AND student_id = $2 AND status = $3',
+    [groupId, studentId, status]
+  );
+  return res.rows.length > 0;
+}
+
+// ---------- Routes ----------
+
+// GET / – list all groups (ADMIN, INSTRUCTOR)
 router.get('/', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async (req, res) => {
   try {
     const query = `
       SELECT 
         g.*,
-        u.name as instructor_name,
-        COUNT(DISTINCT gm.student_id) as student_count
+        u.name AS instructor_name,
+        COUNT(DISTINCT gm.student_id) AS student_count
       FROM groups g
       LEFT JOIN instructors i ON g.instructor_id = i.id
       LEFT JOIN users u ON i.user_id = u.id
@@ -18,7 +41,6 @@ router.get('/', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async (re
       GROUP BY g.id, u.name
       ORDER BY g.created_at DESC
     `;
-
     const result = await db.query(query);
     res.json(result.rows);
   } catch (error) {
@@ -27,50 +49,44 @@ router.get('/', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async (re
   }
 });
 
-// Get group details with students
+// GET /:id – group details with students
 router.get('/:id', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async (req, res) => {
-  const groupId = req.params.id;
-
+  const { id } = req.params;
   try {
-    // Get group details
     const groupQuery = `
       SELECT 
         g.*,
-        u.name as instructor_name,
-        u.email as instructor_email
+        u.name AS instructor_name,
+        u.email AS instructor_email
       FROM groups g
       LEFT JOIN instructors i ON g.instructor_id = i.id
       LEFT JOIN users u ON i.user_id = u.id
       WHERE g.id = $1
     `;
-
-    const groupResult = await db.query(groupQuery, [groupId]);
-
-    if (groupResult.rows.length === 0) {
+    const groupRes = await db.query(groupQuery, [id]);
+    if (groupRes.rows.length === 0) {
       return res.status(404).json({ message: 'Group not found' });
     }
 
-    // Get students in the group
     const studentsQuery = `
       SELECT 
-        s.id as student_id,
-        u.id as user_id,
+        s.id AS student_id,
+        u.id AS user_id,
         u.name,
         u.email,
         gm.joined_date,
-        gm.status as membership_status
+        gm.status AS membership_status
       FROM group_members gm
       JOIN students s ON gm.student_id = s.id
       JOIN users u ON s.user_id = u.id
       WHERE gm.group_id = $1 AND gm.status = 'active'
       ORDER BY u.name
     `;
-
-    const studentsResult = await db.query(studentsQuery, [groupId]);
+    const studentsRes = await db.query(studentsQuery, [id]);
 
     res.json({
-      ...groupResult.rows[0],
-      students: studentsResult.rows
+      ...groupRes.rows[0],
+      students: studentsRes.rows
     });
   } catch (error) {
     console.error('Error fetching group details:', error);
@@ -78,131 +94,76 @@ router.get('/:id', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async 
   }
 });
 
-// Create new group
+// POST / – create group
 router.post('/', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async (req, res) => {
   const { group_name, description, instructor_id, max_students, schedule, start_date, end_date } = req.body;
-
   if (!group_name) {
     return res.status(400).json({ message: 'Group name is required' });
   }
-
   try {
     const query = `
-      INSERT INTO groups (
-        group_name, 
-        description, 
-        instructor_id, 
-        max_students, 
-        schedule, 
-        start_date, 
-        end_date,
-        status,
-        current_students
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 0)
+      INSERT INTO groups (group_name, description, instructor_id, max_students, schedule, start_date, end_date, status, current_students)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 0)
       RETURNING id, group_name, created_at
     `;
-
-    const values = [
-      group_name,
-      description || null,
-      instructor_id || null,
-      max_students || 15,
-      schedule || null,
-      start_date || null,
-      end_date || null
-    ];
-
+    const values = [group_name, description || null, instructor_id || null, max_students || 15, schedule || null, start_date || null, end_date || null];
     const result = await db.query(query, values);
-
-    res.status(201).json({
-      message: 'Group created successfully',
-      group: result.rows[0]
-    });
+    res.status(201).json({ message: 'Group created successfully', group: result.rows[0] });
   } catch (error) {
     console.error('Error creating group:', error);
     res.status(500).json({ message: 'Database error', error: error.message });
   }
 });
 
-// Add student to group
-// Add student to group (and auto‑enroll in linked classes)
-// Add student to group (and auto‑enroll in linked classes)
+// POST /:groupId/add-student/:studentId – add student to group (and auto‑enroll in linked classes)
 router.post('/:groupId/add-student/:studentId', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async (req, res) => {
-  const groupId = req.params.groupId;
-  const studentId = req.params.studentId;
+  const { groupId, studentId } = req.params;
   const client = await db.getClient();
-
   try {
     await client.query('BEGIN');
 
-    // 1. Group existence & capacity check
-    const groupCheck = await client.query(
-      'SELECT id, max_students, current_students FROM groups WHERE id = $1',
-      [groupId]
-    );
-    if (groupCheck.rows.length === 0) {
+    const group = await groupExists(client, groupId);
+    if (!group) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Group not found' });
     }
-    const group = groupCheck.rows[0];
-
-    // 2. Student existence
-    const studentCheck = await client.query('SELECT id FROM students WHERE id = $1', [studentId]);
-    if (studentCheck.rows.length === 0) {
+    if (!(await studentExists(client, studentId))) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Student not found' });
     }
-
-    // 3. Already in group?
-    const existing = await client.query(
-      'SELECT id FROM group_members WHERE group_id = $1 AND student_id = $2 AND status = $3',
-      [groupId, studentId, 'active']
-    );
-    if (existing.rows.length > 0) {
+    if (await isMember(client, groupId, studentId)) {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: 'Student already in this group' });
     }
-
-    // 4. Group capacity
     if (group.current_students >= group.max_students) {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: 'Group is full' });
     }
 
-    // 5. Add to group_members
+    // Add membership
     await client.query(
-      `INSERT INTO group_members (group_id, student_id, status, joined_date)
-       VALUES ($1, $2, 'active', CURRENT_DATE)`,
-      [groupId, studentId]
+      'INSERT INTO group_members (group_id, student_id, status, joined_date) VALUES ($1, $2, $3, CURRENT_DATE)',
+      [groupId, studentId, 'active']
     );
 
-    // 6. Update group current_students
-    await client.query(
-      'UPDATE groups SET current_students = current_students + 1 WHERE id = $1',
-      [groupId]
+    // Update group count
+    await client.query('UPDATE groups SET current_students = current_students + 1 WHERE id = $1', [groupId]);
+
+    // Enroll in all active classes linked to this group
+    const classes = await client.query(
+      'SELECT id FROM classes WHERE group_id = $1 AND status IN ($2, $3)',
+      [groupId, 'scheduled', 'ongoing']
     );
-
-    // 7. ✅ Auto‑enroll into all active classes linked to this group
-    const classesQuery = `
-      SELECT id FROM classes
-      WHERE group_id = $1 AND status IN ('scheduled', 'ongoing')
-    `;
-    const classesResult = await client.query(classesQuery, [groupId]);
-
-    for (const cls of classesResult.rows) {
-      // Check if already enrolled in this class (active enrollment)
-      const alreadyEnrolled = await client.query(
-        `SELECT id FROM class_enrollments
-         WHERE class_id = $1 AND student_id = $2 AND status = 'active'`,
-        [cls.id, studentId]
+    for (const cls of classes.rows) {
+      const already = await client.query(
+        'SELECT id FROM class_enrollments WHERE class_id = $1 AND student_id = $2 AND status = $3',
+        [cls.id, studentId, 'active']
       );
-      if (alreadyEnrolled.rows.length === 0) {
+      if (already.rows.length === 0) {
         await client.query(
-          `INSERT INTO class_enrollments (class_id, student_id, status, enrolled_at)
-           VALUES ($1, $2, 'active', CURRENT_TIMESTAMP)`,
-          [cls.id, studentId]
+          'INSERT INTO class_enrollments (class_id, student_id, status, enrolled_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP)',
+          [cls.id, studentId, 'active']
         );
-        // No need to update classes.current_students – your trigger will do it
       }
     }
 
@@ -217,70 +178,55 @@ router.post('/:groupId/add-student/:studentId', authMiddleware, authorizeRoles('
   }
 });
 
-// Remove student from group
+// DELETE /:groupId/remove-student/:studentId
 router.delete('/:groupId/remove-student/:studentId', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async (req, res) => {
-  const groupId = req.params.groupId;
-  const studentId = req.params.studentId;
-  const client = await db.getClient();  // ✅ Get client
-
+  const { groupId, studentId } = req.params;
+  const client = await db.getClient();
   try {
     await client.query('BEGIN');
 
-    // Check membership
-    const membershipCheck = await client.query(
-      'SELECT id FROM group_members WHERE group_id = $1 AND student_id = $2 AND status = $3',
-      [groupId, studentId, 'active']
-    );
-    if (membershipCheck.rows.length === 0) {
+    if (!(await isMember(client, groupId, studentId))) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Student not found in this group' });
     }
 
-    // Soft delete from group_members
+    // Soft delete membership
     await client.query(
       'UPDATE group_members SET status = $1 WHERE group_id = $2 AND student_id = $3',
       ['inactive', groupId, studentId]
     );
 
     // Drop from all linked classes
-    const classesResult = await client.query(
-      'SELECT id FROM classes WHERE group_id = $1',
-      [groupId]
-    );
-    for (const cls of classesResult.rows) {
+    const classes = await client.query('SELECT id FROM classes WHERE group_id = $1', [groupId]);
+    for (const cls of classes.rows) {
       await client.query(
-        `UPDATE class_enrollments SET status = 'dropped'
-         WHERE class_id = $1 AND student_id = $2 AND status = 'active'`,
-        [cls.id, studentId]
+        'UPDATE class_enrollments SET status = $1 WHERE class_id = $2 AND student_id = $3 AND status = $4',
+        ['dropped', cls.id, studentId, 'active']
       );
     }
 
-    // Decrement group current_students
-    await client.query(
-      'UPDATE groups SET current_students = current_students - 1 WHERE id = $1',
-      [groupId]
-    );
+    // Decrement group count
+    await client.query('UPDATE groups SET current_students = current_students - 1 WHERE id = $1', [groupId]);
 
     await client.query('COMMIT');
     res.json({ message: 'Student removed from group and unenrolled from linked classes' });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Error removing student from group:', error);
+    console.error('Error removing student:', error);
     res.status(500).json({ message: 'Database error', error: error.message });
   } finally {
     client.release();
   }
 });
 
-// Update group
+// PUT /:id – update group
 router.put('/:id', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async (req, res) => {
-  const groupId = req.params.id;
+  const { id } = req.params;
   const { group_name, description, instructor_id, max_students, schedule, start_date, end_date, status } = req.body;
 
   try {
     const query = `
-      UPDATE groups 
-      SET 
+      UPDATE groups SET
         group_name = COALESCE($1, group_name),
         description = COALESCE($2, description),
         instructor_id = COALESCE($3, instructor_id),
@@ -293,58 +239,36 @@ router.put('/:id', authMiddleware, authorizeRoles('ADMIN', 'INSTRUCTOR'), async 
       WHERE id = $9
       RETURNING id, group_name, status
     `;
-
-    const values = [
-      group_name,
-      description,
-      instructor_id,
-      max_students,
-      schedule,
-      start_date,
-      end_date,
-      status,
-      groupId
-    ];
-
+    const values = [group_name, description, instructor_id, max_students, schedule, start_date, end_date, status, id];
     const result = await db.query(query, values);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Group not found' });
     }
-
-    res.json({
-      message: 'Group updated successfully',
-      group: result.rows[0]
-    });
+    res.json({ message: 'Group updated successfully', group: result.rows[0] });
   } catch (error) {
     console.error('Error updating group:', error);
     res.status(500).json({ message: 'Database error', error: error.message });
   }
 });
 
-// Delete group
+// DELETE /:id – delete group (ADMIN only)
 router.delete('/:id', authMiddleware, authorizeRoles('ADMIN'), async (req, res) => {
-  const groupId = req.params.id;
+  const { id } = req.params;
   const client = await db.getClient();
-
   try {
     await client.query('BEGIN');
 
-    // Drop all active enrollments from classes linked to this group
+    // Drop active enrollments from linked classes
     await client.query(
-      `UPDATE class_enrollments ce
-       SET status = 'dropped'
-       FROM classes c
-       WHERE c.group_id = $1 AND ce.class_id = c.id AND ce.status = 'active'`,
-      [groupId]
+      'UPDATE class_enrollments ce SET status = $1 FROM classes c WHERE c.group_id = $2 AND ce.class_id = c.id AND ce.status = $3',
+      ['dropped', id, 'active']
     );
 
-    // Remove group members
-    await client.query('DELETE FROM group_members WHERE group_id = $1', [groupId]);
+    // Remove all group members
+    await client.query('DELETE FROM group_members WHERE group_id = $1', [id]);
 
-    // Delete the group
-    const result = await client.query('DELETE FROM groups WHERE id = $1 RETURNING id', [groupId]);
-
+    const result = await client.query('DELETE FROM groups WHERE id = $1 RETURNING id', [id]);
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Group not found' });
